@@ -1,0 +1,40 @@
+name: Patch Eaglercraft single-thread startup
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-single-thread.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fix contradictory worker configuration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("index.html")
+          s = p.read_text()
+          old = """\t\t\t\tsingleThreadMode: true,
+\t\t\t\tserverWorker: window.location.search.indexOf("singlethread") < 0,
+\t\t\t\tmeshWorkers: window.location.search.indexOf("singlethread") < 0
+\t\t\t\t\t&& window.location.search.indexOf("nomesh") < 0,"""
+          new = """\t\t\t\tsingleThreadMode: true,
+\t\t\t\t// This build is explicitly single-threaded; do not initialize workers.
+\t\t\t\tserverWorker: false,
+\t\t\t\tmeshWorkers: false,"""
+          if old not in s:
+              raise SystemExit("Expected worker configuration was not found; refusing to modify index.html.")
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          print("Patched single-thread worker settings.")
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Fix Eaglercraft single-thread startup workers [skip ci]"
+          git push
