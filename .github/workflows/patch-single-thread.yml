@@ -1,40 +1,63 @@
 name: Patch Eaglercraft single-thread startup
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - '.github/workflows/patch-single-thread.yml'
+      - .github/workflows/patch-single-thread.yml
+
 permissions:
   contents: write
+
 jobs:
   patch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Fix contradictory worker configuration
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Patch worker settings without rewriting embedded payloads
+        shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("index.html")
-          s = p.read_text()
-          old = """\t\t\t\tsingleThreadMode: true,
-\t\t\t\tserverWorker: window.location.search.indexOf("singlethread") < 0,
-\t\t\t\tmeshWorkers: window.location.search.indexOf("singlethread") < 0
-\t\t\t\t\t&& window.location.search.indexOf("nomesh") < 0,"""
-          new = """\t\t\t\tsingleThreadMode: true,
-\t\t\t\t// This build is explicitly single-threaded; do not initialize workers.
-\t\t\t\tserverWorker: false,
-\t\t\t\tmeshWorkers: false,"""
-          if old not in s:
-              raise SystemExit("Expected worker configuration was not found; refusing to modify index.html.")
-          s = s.replace(old, new, 1)
-          p.write_text(s)
-          print("Patched single-thread worker settings.")
+          import re
+
+          path = Path("index.html")
+          html = path.read_text(encoding="utf-8")
+
+          pattern = re.compile(
+              r'(?m)^(\s*singleThreadMode:\s*true,\n)'
+              r'\s*serverWorker:\s*[^\n]+\n'
+              r'\s*meshWorkers:\s*[^\n]+(?:\n\s*&&[^\n]+)?'
+          )
+          replacement = (
+              r'\1'
+              r'\t\t\tserverWorker: false,\n'
+              r'\t\t\tmeshWorkers: false'
+          )
+
+          patched, count = pattern.subn(replacement, html, count=1)
+          if count != 1:
+              raise SystemExit(
+                  "Could not find the expected singleThreadMode/serverWorker/"
+                  "meshWorkers block. No changes were made."
+              )
+
+          path.write_text(patched, encoding="utf-8")
+          print("Patched index.html worker settings; embedded payloads preserved.")
           PY
-      - name: Commit fix
+
+      - name: Commit and push patch
+        shell: bash
         run: |
+          if git diff --quiet -- index.html; then
+            echo "No change was required."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.html
-          git commit -m "Fix Eaglercraft single-thread startup workers [skip ci]"
+          git commit -m "Fix single-thread worker startup configuration"
           git push
