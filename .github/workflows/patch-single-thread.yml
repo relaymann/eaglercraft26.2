@@ -27,10 +27,9 @@ jobs:
           path = Path("index.html")
           html = path.read_text(encoding="utf-8")
 
-          # Keep embedded binary payloads intact, but wrap their Base64 text
-          # so the HTML source is readable instead of one enormous line.
+          # Match payloads whether the Base64 starts on the tag line or the next line.
           payload_pattern = re.compile(
-              r'(<script\b[^>]*type="application/octet-stream"[^>]*>\n)(.*?)(</script>)',
+              r'(<script\b(?=[^>]*\btype="application/octet-stream")[^>]*>)(.*?)(</script\s*>)',
               re.DOTALL,
           )
 
@@ -39,30 +38,34 @@ jobs:
               compact = "".join(payload.split())
               if not compact:
                   return match.group(0)
-              lines = "\n".join(compact[i:i + 76] for i in range(0, len(compact), 76))
-              return opening + lines + "\n" + closing
+              lines = "\n" + "\n".join(
+                  compact[i:i + 76] for i in range(0, len(compact), 76)
+              ) + "\n"
+              return opening + lines + closing
 
           formatted, payload_count = payload_pattern.subn(wrap_payload, html)
           if payload_count < 1:
               raise SystemExit("No embedded application/octet-stream payloads found.")
 
-          # Ensure the main startup configuration is consistent with single-thread mode.
-          worker_pattern = re.compile(
-              r'(?m)^([ \t]*singleThreadMode:[ \t]*true,\n)'
-              r'[ \t]*serverWorker:[ \t]*[^\n]+\n'
-              r'[ \t]*meshWorkers:[ \t]*[^\n]+(?:\n[ \t]*&&[^\n]+)?'
+          # These settings may already be fixed; tolerate that and only patch if needed.
+          single_thread = re.search(
+              r'(?m)^([ \t]*)singleThreadMode:[ \t]*true,\s*\n'
+              r'([ \t]*)serverWorker:[ \t]*([^,\n]+),\s*\n'
+              r'([ \t]*)meshWorkers:[ \t]*([^\n]+)',
+              formatted,
           )
-
-          def fix_workers(match):
-              indent = re.match(r'[ \t]*', match.group(1)).group(0)
-              return match.group(1) + indent + 'serverWorker: false,\n' + indent + 'meshWorkers: false'
-
-          formatted, worker_count = worker_pattern.subn(fix_workers, formatted, count=1)
-          if worker_count != 1:
-              raise SystemExit("Could not find worker configuration; refusing to commit a partial patch.")
+          if single_thread:
+              indent1, indent2, server_value, indent3, mesh_value = single_thread.groups()
+              start, end = single_thread.span()
+              replacement = (
+                  indent1 + "singleThreadMode: true,\n"
+                  + indent2 + "serverWorker: false,\n"
+                  + indent3 + "meshWorkers: false"
+              )
+              formatted = formatted[:start] + replacement + formatted[end:]
 
           path.write_text(formatted, encoding="utf-8")
-          print(f"Formatted {payload_count} embedded payload block(s); worker settings fixed.")
+          print(f"Formatted {payload_count} embedded payload block(s).")
           PY
 
       - name: Commit and push patch
@@ -75,5 +78,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.html
-          git commit -m "Format embedded payloads and fix startup settings"
+          git commit -m "Format embedded payloads in HTML"
           git push
