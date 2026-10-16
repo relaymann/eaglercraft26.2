@@ -32,11 +32,10 @@ jobs:
               r'\s*serverWorker:\s*[^\n]+\n'
               r'\s*meshWorkers:\s*[^\n]+(?:\n\s*&&[^\n]+)?'
           )
-          replacement = (
-              r'\1'
-              r'\t\t\tserverWorker: false,\n'
-              r'\t\t\tmeshWorkers: false'
-          )
+
+          def replacement(match):
+              indent = re.match(r'\s*', match.group(1)).group(0)
+              return match.group(1) + indent + 'serverWorker: false,\n' + indent + 'meshWorkers: false'
 
           patched, count = pattern.subn(replacement, html, count=1)
           if count != 1:
