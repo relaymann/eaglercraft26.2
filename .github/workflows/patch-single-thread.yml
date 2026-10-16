@@ -28,13 +28,13 @@ jobs:
           html = path.read_text(encoding="utf-8")
 
           pattern = re.compile(
-              r'(?m)^([ \\t]*singleThreadMode:[ \\t]*true,\\n)'
-              r'[ \\t]*serverWorker:[ \\t]*[^\\n]+\\n'
-              r'[ \\t]*meshWorkers:[ \\t]*[^\\n]+(?:\\n[ \\t]*&&[^\\n]+)?'
+              r'(?m)^([ \t]*singleThreadMode:[ \t]*true,\n)'
+              r'[ \t]*serverWorker:[ \t]*[^\n]+\n'
+              r'[ \t]*meshWorkers:[ \t]*[^\n]+(?:\n[ \t]*&&[^\n]+)?'
           )
 
           def replacement(match):
-              indent = re.match(r'[ \\t]*', match.group(1)).group(0)
+              indent = re.match(r'[ \t]*', match.group(1)).group(0)
               return match.group(1) + indent + 'serverWorker: false,\n' + indent + 'meshWorkers: false'
 
           patched, count = pattern.subn(replacement, html, count=1)
