@@ -1,4 +1,4 @@
-name: Patch Eaglercraft single-thread startup
+name: Format embedded Eaglercraft payloads
 
 on:
   push:
@@ -17,7 +17,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Patch worker settings without rewriting embedded payloads
+      - name: Format HTML and embedded payloads safely
         shell: bash
         run: |
           python3 - <<'PY'
@@ -27,25 +27,42 @@ jobs:
           path = Path("index.html")
           html = path.read_text(encoding="utf-8")
 
-          pattern = re.compile(
+          # Keep embedded binary payloads intact, but wrap their Base64 text
+          # so the HTML source is readable instead of one enormous line.
+          payload_pattern = re.compile(
+              r'(<script\b[^>]*type="application/octet-stream"[^>]*>\n)(.*?)(</script>)',
+              re.DOTALL,
+          )
+
+          def wrap_payload(match):
+              opening, payload, closing = match.groups()
+              compact = "".join(payload.split())
+              if not compact:
+                  return match.group(0)
+              lines = "\n".join(compact[i:i + 76] for i in range(0, len(compact), 76))
+              return opening + lines + "\n" + closing
+
+          formatted, payload_count = payload_pattern.subn(wrap_payload, html)
+          if payload_count < 1:
+              raise SystemExit("No embedded application/octet-stream payloads found.")
+
+          # Ensure the main startup configuration is consistent with single-thread mode.
+          worker_pattern = re.compile(
               r'(?m)^([ \t]*singleThreadMode:[ \t]*true,\n)'
               r'[ \t]*serverWorker:[ \t]*[^\n]+\n'
               r'[ \t]*meshWorkers:[ \t]*[^\n]+(?:\n[ \t]*&&[^\n]+)?'
           )
 
-          def replacement(match):
+          def fix_workers(match):
               indent = re.match(r'[ \t]*', match.group(1)).group(0)
               return match.group(1) + indent + 'serverWorker: false,\n' + indent + 'meshWorkers: false'
 
-          patched, count = pattern.subn(replacement, html, count=1)
-          if count != 1:
-              raise SystemExit(
-                  "Could not find the expected singleThreadMode/serverWorker/"
-                  "meshWorkers block. No changes were made."
-              )
+          formatted, worker_count = worker_pattern.subn(fix_workers, formatted, count=1)
+          if worker_count != 1:
+              raise SystemExit("Could not find worker configuration; refusing to commit a partial patch.")
 
-          path.write_text(patched, encoding="utf-8")
-          print("Patched index.html worker settings; embedded payloads preserved.")
+          path.write_text(formatted, encoding="utf-8")
+          print(f"Formatted {payload_count} embedded payload block(s); worker settings fixed.")
           PY
 
       - name: Commit and push patch
@@ -58,5 +75,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.html
-          git commit -m "Fix single-thread worker startup configuration"
+          git commit -m "Format embedded payloads and fix startup settings"
           git push
